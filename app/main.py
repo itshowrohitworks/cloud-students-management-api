@@ -1,22 +1,14 @@
 # Entry Point:
-from fastapi import FastAPI
-from app.schemas import StudentCreate
+from fastapi import FastAPI,Depends,HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy import text
+from app.schemas import StudentCreate,StudentResponse
+from app.database import Base,engine,get_db
+from app import models,crud
+
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
-
-# Dummy Data:
-students = [
-    {
-        "id": 1,
-        "name": "Rohit",
-        "course": "M.Tech DS & AI"
-    },
-    {
-        "id": 2,
-        "name": "Alice",
-        "course": "Computer Science"
-    }
-]
 
 # Home API:
 @app.get("/")
@@ -38,19 +30,18 @@ def health():
     }
 
 # Students Data API:
-@app.get("/students")
-def get_students():
-    return students
+@app.get("/students",response_model=list[StudentResponse])
+def get_students(db:Session = Depends(get_db)):
+    return crud.get_students(db)
 
 # Dynamic Students Url:
-@app.get("/students/{student_id}")
-def get_students_id(student_id:int):
-    for student in students:
-        if student["id"] == student_id:
-            return student
-    return {
-        "message":"Student not found!"
-    }
+@app.get("/students/{student_id}",response_model=StudentResponse)
+def get_students_id(student_id:int,db:Session = Depends(get_db)):
+    student = crud.get_student(db,student_id)
+
+    if student is None:
+        raise HTTPException(status_code=404,detail="Student not found!")
+    return student
 
 """
 AWS Concept
@@ -65,9 +56,40 @@ Only the address changes—the API code stays exactly the same.
 """
 
 # Post Request: Adding Students
-@app.post("/students")
-def create_students(student:StudentCreate):
-    student_data = student.model_dump()
-    student_data["id"] = len(students) + 1
-    students.append(student_data)
-    return {"message":f"Successfully created student, with id {student_data["id"]}"}
+@app.post("/students",response_model=StudentResponse)
+def create_students(student:StudentCreate,db:Session = Depends(get_db)):
+    return crud.create_student(db,student)
+
+# Put Request: Updating Students:
+@app.put("/students/{student_id}",response_model=StudentResponse)
+def update_student(
+    student:StudentCreate,
+    student_id:int,
+    db:Session = Depends(get_db),
+):
+    updated = crud.update_student(db,student_id,student) # type:ignore
+
+    if updated is None:
+        raise HTTPException(status_code=404,detail="Student not found!")
+    return updated
+
+# Delete Request: Deleting Students:
+@app.delete("/students/{student_id}")
+def delete_student(student_id:int,db:Session = Depends(get_db)):
+    deleted = crud.delete_student(db,student_id)
+
+    if deleted is None:
+        raise HTTPException(status_code=404,detail="Student not found!")
+
+    return {"message":f"Student with id {student_id}, deleted successfully!"}
+
+
+# Database:
+@app.get("/db-check")
+def db_check():
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SHOW TIMEZONE"))
+        return {"status":"Database Connected Successfully!"}
+    except Exception as e:
+        return {"status":f"Connection failed, Error {str(e)}"}
